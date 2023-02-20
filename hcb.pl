@@ -329,15 +329,10 @@ sub login {
 # Сохраняем IP-адрес, имя пользователя и пароль в файл iVMS-4200
 sub save_good {
     my ($ip, $login, $password) = @_;
+    return 0 unless defined $ip && defined $login && defined $password;
 
-    # Открываем файл на запись
     open(GOOD, '>>', $args->{output})
         or die "Can't open output good file:" . $args->{output} . " [$!]";
-
-    # Формируем строку, содержащую IP-адрес, имя пользователя и пароль, и записываем ее в файл
-    my $line = qq("PokPokPok","0","$ip","8000","0","$login","$password","0","0","0","0"$/);
-    print GOOD $line;
-
-    # Закрываем файл
+    print GOOD qq("PokPokPok","0","$ip","8000","0","$login","$password","0","0","0","0"$/);
     close(GOOD);
 }
