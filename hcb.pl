@@ -293,6 +293,7 @@ sub is_camera {
             }
             else {
                 my $status_line = $resp->status_line();
+                # Обработка тех самых странных ошибок которые говорят о том что удалённая железка офлайн
                 if ($status_line =~ /^Can't connect/ || $status_line =~ /Connection refused/ || $status_line =~ /read timeout/) {
                     $progress_bar->message("[R][!] No Connection while trying to access $url: $status_line")
                         if $dbg;
