@@ -8,6 +8,7 @@ use List::Util qw/any uniq/;
 use File::Slurp qw/read_file/;
 use feature qw/say switch unicode_strings/;
 
+use URI;
 use Coro;
 use Coro::Timer;
 use Coro::Select;
@@ -317,12 +318,17 @@ sub login {
     my ($ip, $username, $password, $ua) = @_;
     return 0 unless defined $ip && defined $username && defined $password && defined $ua;
 
-    # Создаем пакет
-    my $request = HTTP::Request->new(GET => "http://$ip/ISAPI/Security/userCheck");
-    $request->authorization_basic($username, $password);
+    # Создаем URI для запроса
+    my $uri = URI->new('http:');
+    $uri->host_port($ip);
+    $uri->path('/ISAPI/Security/userCheck');
 
-    my $resp = $ua->request($request);
-    return 1 if ($resp->decoded_content || '') =~ m#<statusString>OK</statusString>#;
+    # Создаем HTTP-запрос с авторизацией
+    my $req = HTTP::Request->new(GET => $uri);
+    $req->authorization_basic($username, $password);
+    my $resp = $ua->request($req);
+
+    return 1 if $resp->is_success and ($resp->decoded_content || '') =~ m#<statusString>OK</statusString>#;
     return 0;
 }
 
