@@ -315,18 +315,13 @@ sub is_camera {
 # Проверяет возможность авторизации с заданными учетными данными на камере с заданным IP
 sub login {
     my ($ip, $username, $password, $ua) = @_;
-
-    # Проверяем наличие всех аргументов
     return 0 unless defined $ip && defined $username && defined $password && defined $ua;
 
     # Создаем пакет
     my $request = HTTP::Request->new(GET => "http://$ip/ISAPI/Security/userCheck");
     $request->authorization_basic($username, $password);
 
-    # Отправляем пакет
     my $resp = $ua->request($request);
-
-    # Если ответ содержит строку "<statusString>OK</statusString>", возвращаем 1, иначе 0
     return 1 if ($resp->decoded_content || '') =~ m#<statusString>OK</statusString>#;
     return 0;
 }
