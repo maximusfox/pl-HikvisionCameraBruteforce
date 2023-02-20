@@ -4,7 +4,7 @@ use utf8;
 use strict;
 use warnings;
 
-use List::Util qw/uniq/;
+use List::Util qw/any uniq/;
 use File::Slurp qw/read_file/;
 use feature qw/say switch unicode_strings/;
 
@@ -88,16 +88,14 @@ opt debug => (
     comment => 'Enable additional logging',
 );
 
-# Parse args to hash
-my $args = optargs;
+# Parse args to hash and prevent empty @ARGV
+my $args = optargs(@ARGV);
 
 # Run usage func imported from Getopt::Args for autogenerate help message
-die usage() if (!defined $args || !%$args || keys(%$args) == 1 || (exists $args->{help} && $args->{help}));
+die usage() unless $args and %$args and @ARGV and not $args->{help};
 
 # debug
-if ($args->{debug}) {
-    require Data::Dumper;
-}
+require Data::Dumper if $args->{debug};
 
 # Хеш авторизационных данных для проверки на дубликаты
 my %comboHash;
