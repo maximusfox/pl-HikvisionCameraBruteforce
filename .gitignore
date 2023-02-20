@@ -19,3 +19,6 @@ nytprof.out
 *.bs
 /_eumm/
 /_Deparsed_XSubs.pm
+/ip.txt
+/logins.txt
+/passwords.txt
