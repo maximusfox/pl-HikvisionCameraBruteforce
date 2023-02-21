@@ -28,7 +28,7 @@ perl hcb.pl [OPTIONS...]
 - List::Util
 - File::Slurp
 - Coro
-- Coro::Select
+- Coro::LWP
 - Coro::Channel
 - URI
 - LWP::UserAgent
@@ -38,7 +38,7 @@ perl hcb.pl [OPTIONS...]
 
 Install modules command :
 ```bash
-sudo cpan List::Util File::Slurp Coro Coro::Select Coro::Channel URI LWP::UserAgent LWP::Protocol::socks Term::ProgressBar Getopt::Args Data::Dumper
+sudo cpan List::Util File::Slurp Coro Coro::LWP Coro::Channel URI LWP::UserAgent LWP::Protocol::socks Term::ProgressBar Getopt::Args Data::Dumper
 ```
 
 ## How to Use
