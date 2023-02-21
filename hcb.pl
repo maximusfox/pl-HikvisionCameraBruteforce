@@ -257,10 +257,12 @@ $_->join for @coroutines;
 # Обрабатываем ответ сервера пытаясь найти совпадение с сигнатурой
 sub process_response {
     my ($resp, $progress_bar, $pattern, $dbg) = @_;
-    my ($pattern_str) = Data::Dumper::Dumper($pattern) =~ m!^\$VAR1\s+=\s+(.+);\s*$!;
+    my ($pattern_str) = Data::Dumper::Dumper($pattern) =~ m!^\$VAR1\s+=\s+(.+);\s*$!
+        if $dbg;
 
     my $status_line = $resp->status_line();
     my $no_connection = any {$status_line =~ $_} qr/^Can't connect/, qr/Connection refused/, qr/read timeout/;
+    my $matched = (($resp->as_string() || '') =~ $pattern);
 
     if ($dbg) {
         my $msg_type = $no_connection ? "No Connection" : "Error";
@@ -268,10 +270,11 @@ sub process_response {
         $progress_bar->message($msg);
     }
 
-    my $matched = (($resp->as_string() || '') =~ $pattern);
-    my $msg_type = $matched ? "[+]" : "[-]";
-    my $msg = "[S]$msg_type Signature [$pattern_str] " . ($matched ? "matched" : "not match");
-    $progress_bar->message($msg);
+    if ($dbg) {
+        my $msg_type = $matched ? "[+]" : "[-]";
+        my $msg = "[S]$msg_type Signature [$pattern_str] " . ($matched ? "matched" : "not match");
+        $progress_bar->message($msg);
+    }
 
     return $matched ? 1 : 0;
 }
