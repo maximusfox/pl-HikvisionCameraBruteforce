@@ -93,23 +93,11 @@ opt debug => (
 # Parse args to hash and prevent empty @ARGV
 my $args = optargs(@ARGV);
 
-# Run usage func imported from Getopt::Args for autogenerate help message
 die usage() unless $args and %$args and @ARGV and not $args->{help};
-
-# debug
 require Data::Dumper if $args->{debug};
 
-# Хеш авторизационных данных для проверки на дубликаты
-my %comboHash;
-
-# Массив авторизационных данных вида login:password
-my @comboList;
-
-# Список логинов
-my @logins;
-
-# Список паролей
-my @passwords;
+# Объявляем переменные для комбинаций логинов и паролей
+my (%comboHash, @comboList, @logins, @passwords);
 
 # Загружаем данные из файлов
 if ($args->{combo_file}) {
@@ -160,10 +148,12 @@ if (@logins > 0 && $args->{generate_login_combo}) {
 }
 say 'Total generated combinations: ' . scalar(@comboList);
 
+# Зануляем лишнее вручную
 undef(@logins);
 undef(@passwords);
 undef(%comboHash);
 
+# Парсим комбинацию на логин и пароль
 sub combo_to_login_and_password {
     return map {s/\\(.)/$1/gr} split /(?<!\\):/, $_[0];
 }
@@ -179,8 +169,9 @@ sub combo_to_login_and_password {
     $exclude;
 } @comboList;
 
+# Предотвращаем запуск с пустым набором комбинаций
 if (@comboList == 0) {
-    say '[G][!]An error occurred while generating login:password combinations, the final set of combinations was empty!';
+    say '[G][!] An error occurred while generating login:password combinations, the final set of combinations was empty!';
     exit(1);
 }
 
@@ -197,6 +188,7 @@ my $progress = Term::ProgressBar->new({
 });
 $progress->update(0);
 
+# Перебор пар логин:пасс в отношении одного ip
 sub bruteforce {
     my ($ip_address, $ua, $progress_bar, $combo_list) = @_;
 
@@ -226,6 +218,7 @@ sub bruteforce {
     return $password_found;
 }
 
+# Создаём и наполняем область
 my $channel = Coro::Channel->new();
 $channel->put($_) for @ipList;
 $channel->shutdown;
